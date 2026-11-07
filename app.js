@@ -16,6 +16,18 @@ const KISS_STATION = {
   votes: 0,
   externalPlayer: true
 };
+const TAICHUNG_GOODFM_STATION = {
+  stationuuid: "goodfm-taichung-fm903",
+  name: "好事聯播網 台中好事",
+  url_resolved: "http://202.39.43.67:1935/live/RA000010/chunklist.m3u8",
+  homepage: "http://www.bestradio.com.tw/",
+  country: "Taiwan, Republic Of China",
+  state: "台中",
+  tags: "台中,好事聯播網",
+  frequency: 90.3,
+  clickcount: 0,
+  votes: 0
+};
 const cities = [
   "台北", "新北", "基隆", "桃園", "新竹", "苗栗", "台中", "彰化", "南投",
   "雲林", "嘉義", "台南", "高雄", "屏東", "宜蘭", "花蓮", "台東", "澎湖",
@@ -85,8 +97,28 @@ function stationId(station) {
 }
 
 function getStationCity(station) {
-  const search = `${station.name || ""} ${station.tags || ""} ${station.homepage || ""}`.replace(/臺/g, "台").toLowerCase();
+  const search = `${station.name || ""} ${station.tags || ""} ${station.state || ""} ${station.homepage || ""}`.replace(/臺/g, "台").toLowerCase();
   return cities.find(city => search.includes(city.toLowerCase())) || "";
+}
+
+function getStationFrequency(station) {
+  const declaredFrequency = Number(station.frequency);
+  if (Number.isFinite(declaredFrequency) && declaredFrequency >= 76 && declaredFrequency <= 108) {
+    return declaredFrequency.toFixed(1);
+  }
+  const match = `${station.name || ""} ${station.tags || ""}`.match(/(?:\bFM\s*|)(\d{2,3}\.\d{1,2})(?=\s*(?:MHz|FM)?(?:\b|$))/i);
+  const frequency = Number(match?.[1]);
+  return Number.isFinite(frequency) && frequency >= 76 && frequency <= 108
+    ? frequency.toFixed(1)
+    : "";
+}
+
+function getStationDisplayName(station) {
+  const frequency = getStationFrequency(station);
+  if (!frequency || (station.name || "").includes(frequency)) {
+    return station.name;
+  }
+  return `${station.name} · FM ${frequency}`;
 }
 
 function stationCategory(station) {
@@ -117,7 +149,7 @@ function getFilteredStations() {
   const query = state.query.trim().toLocaleLowerCase();
   return state.stations.filter(station => {
     const category = stationCategory(station);
-    const text = `${station.name} ${station.tags} ${station.homepage}`.toLocaleLowerCase();
+    const text = `${getStationDisplayName(station)} ${station.name} ${station.tags} ${station.homepage}`.toLocaleLowerCase();
     return (state.category === "all" ||
       (state.category === "regional" && category === "regional") ||
       (state.category === "popular" && (category === "popular" || isPopularStation(station))) ||
@@ -140,6 +172,7 @@ function renderStations() {
   elements["station-grid"].innerHTML = shown.map((station, index) => {
     const city = getStationCity(station);
     const category = stationCategory(station);
+    const displayName = getStationDisplayName(station);
     const tags = (station.tags || "").split(",").map(tag => tag.trim()).filter(Boolean);
     const stationTag = tags.find(tag => tag.replace(/臺/g, "台").toLowerCase() !== city.toLowerCase());
     const meta = city ? `${city} · ${stationTag || "在地電台"}` : (stationTag || "台灣網路電台");
@@ -149,11 +182,11 @@ function renderStations() {
     return `<article class="station-card${playing ? " is-playing" : ""}">
       <div class="station-logo" data-tone="${index % 4}">${escapeHtml(initials(station.name))}</div>
       <div class="station-info">
-        <strong class="station-name" title="${escapeHtml(station.name)}">${escapeHtml(station.name)}</strong>
+        <strong class="station-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</strong>
         <span class="station-meta" title="${station.externalPlayer ? "KISS RADIO 官方直播" : `Radio Browser 目錄點擊次數：${Number(station.clickcount) || 0}`}">${escapeHtml(category === "police" ? "警察廣播電台" : meta)} · ${escapeHtml(popularity)}</span>
       </div>
-      <button class="favorite-button${favorite ? " is-favorite" : ""}" type="button" data-favorite="${escapeHtml(stationId(station))}" aria-label="${favorite ? "從最愛移除" : "加入最愛"} ${escapeHtml(station.name)}" aria-pressed="${favorite}" title="${favorite ? "從最愛移除" : "加入最愛"}">${favorite ? "♥" : "♡"}</button>
-      <button class="station-play" type="button" data-station="${escapeHtml(stationId(station))}" aria-label="${playing ? "停止" : "播放"} ${escapeHtml(station.name)}" title="${playing ? "停止播放" : "播放"}">${playing ? "Ⅱ" : "▶"}</button>
+      <button class="favorite-button${favorite ? " is-favorite" : ""}" type="button" data-favorite="${escapeHtml(stationId(station))}" aria-label="${favorite ? "從最愛移除" : "加入最愛"} ${escapeHtml(displayName)}" aria-pressed="${favorite}" title="${favorite ? "從最愛移除" : "加入最愛"}">${favorite ? "♥" : "♡"}</button>
+      <button class="station-play" type="button" data-station="${escapeHtml(stationId(station))}" aria-label="${playing ? "停止" : "播放"} ${escapeHtml(displayName)}" title="${playing ? "停止播放" : "播放"}">${playing ? "Ⅱ" : "▶"}</button>
     </article>`;
   }).join("");
   elements["empty-state"].hidden = shown.length > 0;
@@ -226,6 +259,10 @@ async function loadStations() {
       if (!station.name || !station.url_resolved || station.lastcheckok === 0) continue;
       deduplicated.set(stationId(station), station);
     }
+    const hasGoodFM903 = [...deduplicated.values()].some(station =>
+      getStationFrequency(station) === "90.3" && /好事/.test(`${station.name} ${station.tags}`)
+    );
+    if (!hasGoodFM903) deduplicated.set(stationId(TAICHUNG_GOODFM_STATION), TAICHUNG_GOODFM_STATION);
     deduplicated.set(stationId(KISS_STATION), KISS_STATION);
     if (!deduplicated.size) throw new Error("電台目錄目前沒有提供可播放的台灣電台。");
     state.stations = [...deduplicated.values()];
@@ -277,7 +314,7 @@ async function playStation(station) {
     stopMusic(false);
     state.activeStation = station;
     state.activePlayer = null;
-    updateNowPlaying(station.name, "高雄 FM99.9 · 官方直播播放器");
+    updateNowPlaying(getStationDisplayName(station), "高雄 FM99.9 · 官方直播播放器");
     renderStations();
     setKissChannel(state.kissChannel);
     elements["official-player-dialog"].showModal();
@@ -288,7 +325,7 @@ async function playStation(station) {
   state.activeStation = station;
   audio.src = station.url_resolved;
   audio.volume = Number(elements["volume-control"].value);
-  updateNowPlaying(station.name, "台灣網路廣播 · 直播中");
+  updateNowPlaying(getStationDisplayName(station), "台灣網路廣播 · 直播中");
   setActivePlayer("radio");
   renderStations();
   try {
