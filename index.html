@@ -9,6 +9,7 @@
     <link rel="icon" href="./icon.svg" type="image/svg+xml">
     <link rel="manifest" href="./manifest.json">
     <link rel="stylesheet" href="./styles.css">
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@1.6.13/dist/hls.min.js" defer></script>
     <script src="./app.js" defer></script>
   </head>
   <body>
@@ -128,7 +129,7 @@
               <span aria-hidden="true">⌕</span><strong>找不到符合條件的電台</strong><p>試試其他關鍵字或篩選條件。</p>
             </div>
           </section>
-          <footer class="content-footer"><span>電台資訊由 Radio Browser 社群目錄提供</span><span>享受收聽，支持在地聲音 <b>♥</b></span></footer>
+          <footer class="content-footer"><span>電台資訊由 Radio Browser 與 <a href="https://radios.tw/" target="_blank" rel="noopener noreferrer">Radios.tw</a> 提供</span><span>享受收聽，支持在地聲音 <b>♥</b></span></footer>
         </section>
 
         <section class="view-panel music-view" id="music-view" aria-labelledby="music-title" hidden>
@@ -189,7 +190,7 @@
       <dialog id="official-player-dialog" class="official-player-dialog" aria-labelledby="official-player-title">
         <div class="official-player-heading">
           <div>
-            <span class="section-kicker">OFFICIAL LIVE STREAM</span>
+            <span class="section-kicker" id="official-player-kicker">OFFICIAL LIVE STREAM</span>
             <h2 id="official-player-title">KISS RADIO FM99.9</h2>
           </div>
           <button id="close-official-player" class="dialog-close" type="button" aria-label="關閉官方播放器">×</button>

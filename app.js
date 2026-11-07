@@ -16,17 +16,64 @@ const KISS_STATION = {
   votes: 0,
   externalPlayer: true
 };
+const RADIOS_TW_STATIONS = [
+  ["apple-line-radop", "A-Line Radio 聯播網", "98.7 FM"],
+  ["bao-dao-991", "Bao Dao Radio 大千電台", "99.1 FM"],
+  ["bao-dao-985", "Bao Dao Radio 寶島新聲", "98.5 FM"],
+  ["hit-fm-91-5", "HitFM 聯播網－中部", "91.5 FM", "台中"],
+  ["hit-fm-90-1", "HitFM 聯播網－南部", "90.1 FM"],
+  ["hit-fm97-1", "HitFM 聯播網－宜蘭", "97.1 FM", "宜蘭"],
+  ["icrt", "ICRT", "100.0 FM"],
+  ["ic-broadcasting", "IC 之音竹科廣播", "97.5 FM"],
+  ["kiss-taiwan", "Kiss Radio", "99.9 FM"],
+  ["shih-hsin-station", "世新廣播電台", "729 AM"],
+  ["bcc-news-network", "中廣新聞網", "657 AM"],
+  ["i-like-bcc-pop-network", "中廣流行網", "103.3 FM"],
+  ["i-bcc-music-network", "中廣音樂網", "96.3 FM"],
+  ["news-98-fm", "九八新聞台", "98.1 FM"],
+  ["asia-fm-92-3", "亞洲廣播網－亞太電台", "92.3 FM"],
+  ["asia-fm-92-7", "亞洲廣播網－亞洲電台", "92.7 FM"],
+  ["good-news-fm", "佳音廣播電台", "90.9 FM"],
+  ["mnational-broadcast", "全國廣播", "106.1 FM"],
+  ["national-education", "國立教育廣播電臺", "101.7 FM"],
+  ["city-fm-92-9", "城市廣播網", "92.9 FM"],
+  ["city-fm-98-3", "城市廣播網－大苗栗廣播", "98.3 FM", "苗栗"],
+  ["voice-of-hakka", "大漢之音", "97.1 FM"],
+  ["sunny", "太陽電台", "89.1 FM"],
+  ["best-taichung", "好事903電台", "90.3 FM", "台中"],
+  ["best", "好事聯播網", "98.9 FM"],
+  ["classical-fm-97-7", "好家庭聯播網－古典音樂台", "97.7 FM"],
+  ["bravo-fm", "好家庭聯播網－台北都會音樂台", "91.3 FM", "台北"],
+  ["formosa-hakka", "寶島客家電台", "93.7 FM"],
+  ["fhbs-1", "復興廣播電台", "558 AM"],
+  ["smile-taiwan-tainan", "微微笑廣播網－台南凱旋電台", "97.9 FM", "台南"],
+  ["smile-taiwan-happy", "微微笑廣播網－歡喜之聲", "105.5 FM"],
+  ["smile-taiwan", "微微笑廣播網－高雄下港之聲", "90.5 FM", "高雄"],
+  ["happy-taipei", "快樂聯播網－台北台", "89.3 FM", "台北"],
+  ["vnccu", "政大之聲", "88.7 FM", "台北"],
+  ["chengsheng-broadcasting-fm-tai", "正聲廣播", "104.1 FM"],
+  ["voice-of-han-broadcasting-netw", "漢聲廣播電台", "106.5 FM"],
+  ["uni", "環宇廣播電台", "96.7 FM"],
+  ["tbs", "臺北廣播電臺", "93.1 FM", "台北"],
+  ["pbs-national", "警察廣播電台－全國治安交通網", "104.9 FM"],
+  ["police-broadcasting-service-ta", "警察廣播電台－台北台", "94.3 FM", "台北"],
+  ["voice-of-fu-jen-catholic-unive", "輔大之聲", "88.5 FM", "新北"],
+  ["fly", "飛揚調頻", "89.5 FM"],
+  ["ufo", "飛碟聯播網", "92.1 FM"]
+];
 const TAICHUNG_GOODFM_STATION = {
   stationuuid: "goodfm-taichung-fm903",
   name: "好事聯播網 台中好事",
-  url_resolved: "http://202.39.43.67:1935/live/RA000010/chunklist.m3u8",
   homepage: "http://www.bestradio.com.tw/",
   country: "Taiwan, Republic Of China",
   state: "台中",
   tags: "台中,好事聯播網",
   frequency: 90.3,
+  radiosSlug: "best-taichung",
   clickcount: 0,
-  votes: 0
+  votes: 0,
+  externalPlayer: true,
+  officialPage: true
 };
 const cities = [
   "台北", "新北", "基隆", "桃園", "新竹", "苗栗", "台中", "彰化", "南投",
@@ -44,7 +91,7 @@ const elements = Object.fromEntries([
   "next-button", "stop-button", "seek-bar", "current-time", "duration-time",
   "volume-control", "volume-value", "now-title", "now-subtitle", "cover-art",
   "playing-live", "toast", "install-button", "official-player-dialog",
-  "official-player-frame", "close-official-player", "official-player-hint",
+  "official-player-kicker", "official-player-title", "official-player-frame", "close-official-player", "official-player-hint",
   "official-player-link"
 ].map(id => [id, document.getElementById(id)]));
 
@@ -72,6 +119,10 @@ const state = {
   playlist: [],
   playlistStart: 0,
   currentTrack: -1,
+  radioRequestId: 0,
+  radioSourceCache: new Map(),
+  hlsPlayer: null,
+  externalPlayerOpen: false,
   playRequestId: 0,
   loadingTrack: false,
   opusDecoderPromise: null,
@@ -93,7 +144,9 @@ const state = {
 };
 
 function stationId(station) {
-  return station.stationuuid || `${station.name}|${station.url_resolved}`;
+  return station.stationuuid || (station.radiosSlug
+    ? `radios-tw-${station.radiosSlug}`
+    : `${station.name}|${station.url_resolved}`);
 }
 
 function getStationCity(station) {
@@ -103,13 +156,17 @@ function getStationCity(station) {
 
 function getStationFrequency(station) {
   const declaredFrequency = Number(station.frequency);
-  if (Number.isFinite(declaredFrequency) && declaredFrequency >= 76 && declaredFrequency <= 108) {
-    return declaredFrequency.toFixed(1);
+  const hasAmFrequency = /\bAM\b/i.test(`${station.signal || ""} ${station.name || ""} ${station.tags || ""}`);
+  if (Number.isFinite(declaredFrequency) &&
+      (hasAmFrequency ? declaredFrequency >= 500 && declaredFrequency <= 1800 : declaredFrequency >= 76 && declaredFrequency <= 108)) {
+    return declaredFrequency.toFixed(hasAmFrequency ? 0 : 1);
   }
-  const match = `${station.name || ""} ${station.tags || ""}`.match(/(?:\bFM\s*|)(\d{2,3}\.\d{1,2})(?=\s*(?:MHz|FM)?(?:\b|$))/i);
-  const frequency = Number(match?.[1]);
-  return Number.isFinite(frequency) && frequency >= 76 && frequency <= 108
-    ? frequency.toFixed(1)
+  const match = `${station.signal || ""} ${station.name || ""} ${station.tags || ""}`.match(/(\d{2,4}(?:\.\d{1,2})?)\s*(FM|AM)\b|\b(FM|AM)\s*(\d{2,4}(?:\.\d{1,2})?)/i);
+  const band = (match?.[2] || match?.[3] || "").toUpperCase();
+  const value = Number(match?.[1] || match?.[4]);
+  return Number.isFinite(value) &&
+      (band === "AM" ? value >= 500 && value <= 1800 : value >= 76 && value <= 108)
+    ? value.toFixed(band === "AM" ? 0 : 1)
     : "";
 }
 
@@ -118,7 +175,8 @@ function getStationDisplayName(station) {
   if (!frequency || (station.name || "").includes(frequency)) {
     return station.name;
   }
-  return `${station.name} · FM ${frequency}`;
+  const band = /\bAM\b/i.test(`${station.signal || ""} ${station.name || ""} ${station.tags || ""}`) ? "AM" : "FM";
+  return `${station.name} · ${band} ${frequency}`;
 }
 
 function stationCategory(station) {
@@ -149,7 +207,7 @@ function getFilteredStations() {
   const query = state.query.trim().toLocaleLowerCase();
   return state.stations.filter(station => {
     const category = stationCategory(station);
-    const text = `${getStationDisplayName(station)} ${station.name} ${station.tags} ${station.homepage}`.toLocaleLowerCase();
+    const text = `${getStationDisplayName(station)} ${station.name || ""} ${station.tags || ""} ${station.homepage || ""}`.toLocaleLowerCase();
     return (state.category === "all" ||
       (state.category === "regional" && category === "regional") ||
       (state.category === "popular" && (category === "popular" || isPopularStation(station))) ||
@@ -163,6 +221,7 @@ function getFilteredStations() {
 function renderStations() {
   const filtered = getFilteredStations().sort((a, b) => {
     if (state.sort === "name") return a.name.localeCompare(b.name, "zh-TW");
+    if (Boolean(a.radiosSlug) !== Boolean(b.radiosSlug)) return a.radiosSlug ? -1 : 1;
     return (Number(b.clickcount) || 0) - (Number(a.clickcount) || 0) ||
       (Number(b.votes) || 0) - (Number(a.votes) || 0) ||
       a.name.localeCompare(b.name, "zh-TW");
@@ -178,12 +237,14 @@ function renderStations() {
     const meta = city ? `${city} · ${stationTag || "在地電台"}` : (stationTag || "台灣網路電台");
     const playing = state.activeStation && stationId(state.activeStation) === stationId(station);
     const favorite = state.favorites.has(stationId(station));
-    const popularity = station.externalPlayer ? "官方直播" : `${Number(station.clickcount) || 0} 次收聽`;
+    const popularity = station.externalPlayer ? "官方直播" : station.radiosSlug
+      ? "Radios.tw 電台"
+      : `${Number(station.clickcount) || 0} 次收聽`;
     return `<article class="station-card${playing ? " is-playing" : ""}">
       <div class="station-logo" data-tone="${index % 4}">${escapeHtml(initials(station.name))}</div>
       <div class="station-info">
         <strong class="station-name" title="${escapeHtml(displayName)}">${escapeHtml(displayName)}</strong>
-        <span class="station-meta" title="${station.externalPlayer ? "KISS RADIO 官方直播" : `Radio Browser 目錄點擊次數：${Number(station.clickcount) || 0}`}">${escapeHtml(category === "police" ? "警察廣播電台" : meta)} · ${escapeHtml(popularity)}</span>
+        <span class="station-meta" title="${station.externalPlayer ? "官方播放器" : station.radiosSlug ? "電台資訊與播放來源：Radios.tw" : `Radio Browser 目錄點擊次數：${Number(station.clickcount) || 0}`}">${escapeHtml(category === "police" ? "警察廣播電台" : meta)} · ${escapeHtml(popularity)}</span>
       </div>
       <button class="favorite-button${favorite ? " is-favorite" : ""}" type="button" data-favorite="${escapeHtml(stationId(station))}" aria-label="${favorite ? "從最愛移除" : "加入最愛"} ${escapeHtml(displayName)}" aria-pressed="${favorite}" title="${favorite ? "從最愛移除" : "加入最愛"}">${favorite ? "♥" : "♡"}</button>
       <button class="station-play" type="button" data-station="${escapeHtml(stationId(station))}" aria-label="${playing ? "停止" : "播放"} ${escapeHtml(displayName)}" title="${playing ? "停止播放" : "播放"}">${playing ? "Ⅱ" : "▶"}</button>
@@ -230,6 +291,123 @@ function apiUrl(path) {
   return `${API_BASE}${path}`;
 }
 
+function radiosTwStation(entry) {
+  const frequency = Number((entry[2].match(/\d{2,4}(?:\.\d{1,2})?/) || [])[0]);
+  const city = entry[3] || "";
+  return {
+    stationuuid: `radios-tw-${entry[0]}`,
+    name: entry[1],
+    url_resolved: "",
+    homepage: `https://radios.tw/${entry[0]}/`,
+    country: "Taiwan, Republic Of China",
+    state: city,
+    tags: [city, entry[2], /警察/.test(entry[1]) ? "police" : ""].filter(Boolean).join(","),
+    signal: entry[2],
+    frequency,
+    radiosSlug: entry[0],
+    clickcount: 0,
+    votes: 0
+  };
+}
+
+function stationNameKey(name) {
+  return (name || "").toLowerCase().replace(/臺/g, "台")
+    .replace(/radio|fm|am|電台|廣播|聯播網|網路|台灣|[\d.]+|[^\p{L}\p{N}]/gu, "");
+}
+
+function isSameRadiosStation(station, radiosStation) {
+  const stationKey = stationNameKey(station.name);
+  const radiosKey = stationNameKey(radiosStation.name);
+  if (stationKey && stationKey === radiosKey) return true;
+  const stationFrequency = getStationFrequency(station);
+  const radiosFrequency = getStationFrequency(radiosStation);
+  return stationFrequency !== "" && stationFrequency === radiosFrequency &&
+    stationKey.length >= 2 && radiosKey.length >= 2 &&
+    (stationKey.includes(radiosKey) || radiosKey.includes(stationKey));
+}
+
+function mergeRadiosTwStations(stations) {
+  const merged = [...stations];
+  for (const entry of RADIOS_TW_STATIONS) {
+    const radiosStation = radiosTwStation(entry);
+    const existing = merged.find(station => isSameRadiosStation(station, radiosStation));
+    if (existing) {
+      existing.radiosSlug = entry[0];
+      existing.frequency ||= radiosStation.frequency;
+      existing.signal ||= radiosStation.signal;
+      if (!getStationCity(existing) && radiosStation.state) existing.state = radiosStation.state;
+      continue;
+    }
+    merged.push(radiosStation);
+  }
+  const unique = [];
+  for (const station of merged) {
+    const key = stationNameKey(station.name);
+    const frequency = getStationFrequency(station);
+    const city = getStationCity(station);
+    const duplicate = key
+      ? unique.find(candidate => {
+        const candidateFrequency = getStationFrequency(candidate);
+        const candidateCity = getStationCity(candidate);
+        return (candidate.radiosSlug || station.radiosSlug) &&
+          stationNameKey(candidate.name) === key &&
+          (!frequency || !candidateFrequency || candidateFrequency === frequency) &&
+          (!city || !candidateCity || city === candidateCity);
+      })
+      : null;
+    if (!duplicate) {
+      unique.push(station);
+      continue;
+    }
+    duplicate.radiosSlug ||= station.radiosSlug;
+    duplicate.frequency ||= station.frequency;
+    duplicate.signal ||= station.signal;
+    if (!duplicate.url_resolved && station.url_resolved) duplicate.url_resolved = station.url_resolved;
+    if (!duplicate.homepage && station.homepage) duplicate.homepage = station.homepage;
+    if (!getStationCity(duplicate) && getStationCity(station)) duplicate.state = station.state;
+    duplicate.clickcount = Math.max(Number(duplicate.clickcount) || 0, Number(station.clickcount) || 0);
+    duplicate.votes = Math.max(Number(duplicate.votes) || 0, Number(station.votes) || 0);
+  }
+  return unique;
+}
+
+async function getRadioSources(station) {
+  if (station.radiosSlug) {
+    if (!state.radioSourceCache.has(station.radiosSlug)) {
+      const request = fetch(`https://api.instant.audio/data/streams/142/${encodeURIComponent(station.radiosSlug)}`)
+        .then(async response => {
+          if (!response.ok) throw new Error(`Radios.tw 回應錯誤（${response.status}）`);
+          const data = await response.json();
+          if (data.success !== true || !Array.isArray(data.result?.streams)) {
+            throw new Error("Radios.tw 沒有提供此電台的播放來源。");
+          }
+          return data.result.streams
+            .filter(stream => stream.url && (
+              stream.mediaType === "HLS" ||
+              (!stream.isContainer && /^audio\//i.test(stream.mime || ""))
+            ))
+            .map(stream => ({
+              url: stream.url,
+              mime: stream.mime || "",
+              type: stream.mediaType === "HLS" ? "HLS" : "DIRECT"
+            }));
+        })
+        .catch(error => {
+          state.radioSourceCache.delete(station.radiosSlug);
+          throw error;
+        });
+      state.radioSourceCache.set(station.radiosSlug, request);
+    }
+    try {
+      const sources = await state.radioSourceCache.get(station.radiosSlug);
+      if (sources.length) return sources;
+    } catch (error) {
+      console.warn(`無法載入 ${station.name} 的 Radios.tw 播放來源：`, error);
+    }
+  }
+  return station.url_resolved ? [{ url: station.url_resolved, mime: "", type: "DIRECT" }] : [];
+}
+
 async function loadStations() {
   elements["connection-text"].textContent = "正在連線電台目錄";
   elements["catalog-message"].hidden = true;
@@ -259,21 +437,25 @@ async function loadStations() {
       if (!station.name || !station.url_resolved || station.lastcheckok === 0) continue;
       deduplicated.set(stationId(station), station);
     }
-    const hasGoodFM903 = [...deduplicated.values()].some(station =>
+    const stations = mergeRadiosTwStations([...deduplicated.values()]);
+    const hasGoodFM903 = stations.some(station =>
       getStationFrequency(station) === "90.3" && /好事/.test(`${station.name} ${station.tags}`)
     );
-    if (!hasGoodFM903) deduplicated.set(stationId(TAICHUNG_GOODFM_STATION), TAICHUNG_GOODFM_STATION);
-    deduplicated.set(stationId(KISS_STATION), KISS_STATION);
-    if (!deduplicated.size) throw new Error("電台目錄目前沒有提供可播放的台灣電台。");
-    state.stations = [...deduplicated.values()];
+    if (!hasGoodFM903) stations.push(TAICHUNG_GOODFM_STATION);
+    stations.push(KISS_STATION);
+    if (!stations.length) throw new Error("電台目錄目前沒有提供可播放的台灣電台。");
+    state.stations = stations;
     updateCityFilter();
     renderStations();
     elements["connection-text"].textContent = "電台目錄已連線";
     elements["catalog-message"].hidden = true;
   } catch (error) {
     console.error("載入電台目錄失敗：", error);
-    elements["connection-text"].textContent = "目錄連線失敗";
-    elements["catalog-message"].innerHTML = `暫時無法載入電台目錄：${escapeHtml(error.message)} <button type="button" id="retry-catalog">重試</button>`;
+    state.stations = mergeRadiosTwStations([TAICHUNG_GOODFM_STATION, KISS_STATION]);
+    updateCityFilter();
+    renderStations();
+    elements["connection-text"].textContent = "已載入 Radios.tw 電台清單";
+    elements["catalog-message"].innerHTML = `Radio Browser 暫時無法連線：${escapeHtml(error.message)}；目前顯示 Radios.tw 整理的電台。<button type="button" id="retry-catalog">重試</button>`;
     elements["catalog-message"].hidden = false;
     document.getElementById("retry-catalog").addEventListener("click", loadStations);
   }
@@ -314,31 +496,131 @@ async function playStation(station) {
     stopMusic(false);
     state.activeStation = station;
     state.activePlayer = null;
-    updateNowPlaying(getStationDisplayName(station), "高雄 FM99.9 · 官方直播播放器");
+    state.externalPlayerOpen = true;
+    const isGoodFM = station.officialPage === true;
+    updateNowPlaying(getStationDisplayName(station), isGoodFM
+      ? "台中 FM90.3 · 好事聯播網官方播放器"
+      : "高雄 FM99.9 · 官方直播播放器");
     renderStations();
-    setKissChannel(state.kissChannel);
+    if (isGoodFM) setGoodFMPlayer();
+    else setKissChannel(state.kissChannel);
     elements["official-player-dialog"].showModal();
     return;
   }
+  stopRadio();
   stopMusic(false);
+  const requestId = state.radioRequestId;
   const audio = elements["radio-audio"];
   state.activeStation = station;
-  audio.src = station.url_resolved;
-  audio.volume = Number(elements["volume-control"].value);
   updateNowPlaying(getStationDisplayName(station), "台灣網路廣播 · 直播中");
-  setActivePlayer("radio");
   renderStations();
-  try {
-    await audio.play();
-    setActivePlayer("radio");
-  } catch (error) {
-    console.error("無法播放電台：", error);
-    setActivePlayer(null);
-    state.activeStation = null;
-    renderStations();
-    updateNowPlaying("無法播放這個電台", "請稍後再試，或選擇其他電台");
-    showToast("電台播放失敗，可能是串流暫時離線或瀏覽器不支援此格式。");
+  const sources = await getRadioSources(station);
+  if (requestId !== state.radioRequestId) return;
+  if (!sources.length) {
+    openRadiosTwFallback(station);
+    return;
   }
+  for (const source of sources) {
+    try {
+      await playRadioSource(source);
+      if (requestId !== state.radioRequestId) return;
+      state.externalPlayerOpen = false;
+      setActivePlayer("radio");
+      return;
+    } catch (error) {
+      console.warn(`無法播放 ${station.name} 的 ${source.type} 串流：`, error);
+    }
+  }
+  if (station.radiosSlug) {
+    openRadiosTwFallback(station);
+    showToast("電台串流無法播放，已提供 Radios.tw 與官方收聽頁面。");
+    return;
+  }
+  state.activeStation = null;
+  setActivePlayer(null);
+  renderStations();
+  updateNowPlaying("無法播放這個電台", "請稍後再試，或選擇其他電台");
+  showToast("電台播放失敗，可能是串流暫時離線或瀏覽器不支援此格式。");
+}
+
+function destroyHlsPlayer() {
+  if (!state.hlsPlayer) return;
+  state.hlsPlayer.destroy();
+  state.hlsPlayer = null;
+}
+
+async function playRadioSource(source) {
+  const audio = elements["radio-audio"];
+  audio.pause();
+  audio.removeAttribute("src");
+  audio.load();
+  destroyHlsPlayer();
+  audio.volume = Number(elements["volume-control"].value);
+  if (source.type === "HLS" &&
+      !audio.canPlayType(source.mime || "application/vnd.apple.mpegurl") &&
+      window.Hls?.isSupported()) {
+    const hls = new window.Hls();
+    state.hlsPlayer = hls;
+    await new Promise((resolve, reject) => {
+      hls.once(window.Hls.Events.MANIFEST_PARSED, () => {
+        audio.play().then(resolve, reject);
+      });
+      hls.once(window.Hls.Events.ERROR, (_event, data) => {
+        if (data.fatal) reject(new Error("HLS 串流載入失敗。"));
+      });
+      hls.loadSource(source.url);
+      hls.attachMedia(audio);
+    });
+    return;
+  }
+  if (source.type === "HLS" && !audio.canPlayType(source.mime || "application/vnd.apple.mpegurl")) {
+    throw new Error("此瀏覽器不支援 HLS 播放。");
+  }
+  audio.src = source.url;
+  await audio.play();
+}
+
+function openRadiosTwFallback(station) {
+  stopRadio();
+  stopMusic(false);
+  state.activeStation = station;
+  state.externalPlayerOpen = true;
+  state.activePlayer = null;
+  updateNowPlaying(getStationDisplayName(station), station.radiosSlug === "best-taichung"
+    ? "台中 FM90.3 · 好事聯播網官方播放器"
+    : "請透過 Radios.tw 或電台官網收聽");
+  renderStations();
+  setRadiosTwFallback(station);
+  elements["official-player-dialog"].showModal();
+}
+
+function setRadiosTwFallback(station) {
+  if (station.radiosSlug === "best-taichung") {
+    setGoodFMPlayer();
+    return;
+  }
+  const radiosPage = station.radiosSlug
+    ? `https://radios.tw/${station.radiosSlug}/`
+    : station.homepage;
+  elements["official-player-kicker"].textContent = "RADIOS.TW BACKUP";
+  elements["official-player-title"].textContent = `${getStationDisplayName(station)} · 收聽選項`;
+  elements["official-player-frame"].src = "about:blank";
+  elements["official-player-frame"].hidden = true;
+  document.querySelector(".kiss-channel-picker").hidden = true;
+  elements["official-player-hint"].textContent = "這個電台沒有可直接播放的串流，或目前串流無法連線。請前往 Radios.tw 電台頁，使用其收聽選項。";
+  elements["official-player-link"].href = radiosPage;
+  elements["official-player-link"].innerHTML = "開啟 Radios.tw 電台頁 <span aria-hidden=\"true\">↗</span>";
+}
+
+function setGoodFMPlayer() {
+  elements["official-player-kicker"].textContent = "OFFICIAL LIVE STREAM";
+  elements["official-player-title"].textContent = "好事聯播網官方播放器";
+  elements["official-player-frame"].src = "about:blank";
+  elements["official-player-frame"].hidden = true;
+  elements["official-player-hint"].textContent = "好事聯播網會在官方播放器中更新有效串流網址。開啟後，請選擇「好事903電台」開始收聽。";
+  elements["official-player-link"].href = "http://www.bestradio.com.tw/link.aspx";
+  elements["official-player-link"].innerHTML = "開啟好事聯播網官方播放器並選擇 903 <span aria-hidden=\"true\">↗</span>";
+  document.querySelector(".kiss-channel-picker").hidden = true;
 }
 
 function setKissChannel(channel) {
@@ -348,6 +630,10 @@ function setKissChannel(channel) {
     ? `https://player.twitch.tv/?channel=livekiss&parent=${encodeURIComponent(twitchParent)}&autoplay=true`
     : `https://www.kiss.com.tw/radio_hq.php?fm=999&player=${channel}`;
   const channelName = channel === "lh" ? "官方頻道一" : channel === "youtube" ? "官方頻道二" : "Twitch 直播";
+  elements["official-player-kicker"].textContent = "OFFICIAL LIVE STREAM";
+  elements["official-player-title"].textContent = "KISS RADIO FM99.9";
+  elements["official-player-frame"].hidden = false;
+  document.querySelector(".kiss-channel-picker").hidden = false;
   elements["official-player-frame"].src = pageUrl;
   elements["official-player-hint"].textContent = isTwitch
     ? "使用 Twitch LiveKiss 直播；請在播放器中啟動播放並調整音量。"
@@ -362,11 +648,14 @@ function setKissChannel(channel) {
 }
 
 function stopRadio() {
+  state.radioRequestId += 1;
   const audio = elements["radio-audio"];
   audio.pause();
   audio.removeAttribute("src");
   audio.load();
+  destroyHlsPlayer();
   state.activeStation = null;
+  state.externalPlayerOpen = false;
   if (state.activePlayer === "radio") state.activePlayer = null;
   renderStations();
 }
@@ -1037,8 +1326,10 @@ elements["track-list"].addEventListener("scroll", () => {
 }, { passive: true });
 elements["official-player-dialog"].addEventListener("close", () => {
   elements["official-player-frame"].src = "about:blank";
-  if (state.activeStation?.externalPlayer) {
+  if (state.externalPlayerOpen) {
+    state.externalPlayerOpen = false;
     state.activeStation = null;
+    state.activePlayer = null;
     updateNowPlaying("準備好開始收聽了嗎？", "選一個電台，或播放你的音樂");
     renderStations();
   }
