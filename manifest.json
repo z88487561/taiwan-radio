@@ -1,0 +1,19 @@
+{
+  "name": "島聲 FM — 台灣網路廣播與音樂播放器",
+  "short_name": "島聲 FM",
+  "description": "收聽台灣各地網路廣播，也能播放本地音樂。",
+  "lang": "zh-Hant",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#10191d",
+  "theme_color": "#101b20",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
