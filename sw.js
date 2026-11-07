@@ -1,4 +1,4 @@
-const CACHE_NAME = "island-fm-shell-v13";
+const CACHE_NAME = "island-fm-shell-v14";
 const SHELL_FILES = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json", "./icon.svg"];
 
 self.addEventListener("install", event => {

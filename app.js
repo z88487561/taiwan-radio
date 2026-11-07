@@ -25,7 +25,6 @@ const RADIOS_TW_STATIONS = [
   ["hit-fm97-1", "HitFM 聯播網－宜蘭", "97.1 FM", "宜蘭"],
   ["icrt", "ICRT", "100.0 FM"],
   ["ic-broadcasting", "IC 之音竹科廣播", "97.5 FM"],
-  ["kiss-taiwan", "Kiss Radio", "99.9 FM"],
   ["shih-hsin-station", "世新廣播電台", "729 AM"],
   ["bcc-news-network", "中廣新聞網", "657 AM"],
   ["i-like-bcc-pop-network", "中廣流行網", "103.3 FM"],
@@ -140,7 +139,7 @@ const state = {
   toastTimeout: null,
   installPrompt: null,
   directoryLoaded: false,
-  kissChannel: "twitch"
+  kissChannel: "lh"
 };
 
 function stationId(station) {
@@ -437,12 +436,16 @@ async function loadStations() {
       if (!station.name || !station.url_resolved || station.lastcheckok === 0) continue;
       deduplicated.set(stationId(station), station);
     }
-    const stations = mergeRadiosTwStations([...deduplicated.values()]);
+    const stations = mergeRadiosTwStations([
+      ...[...deduplicated.values()].filter(station =>
+        !(getStationFrequency(station) === "99.9" && /kiss/i.test(station.name))
+      ),
+      KISS_STATION
+    ]);
     const hasGoodFM903 = stations.some(station =>
       getStationFrequency(station) === "90.3" && /好事/.test(`${station.name} ${station.tags}`)
     );
     if (!hasGoodFM903) stations.push(TAICHUNG_GOODFM_STATION);
-    stations.push(KISS_STATION);
     if (!stations.length) throw new Error("電台目錄目前沒有提供可播放的台灣電台。");
     state.stations = stations;
     updateCityFilter();
@@ -624,24 +627,16 @@ function setGoodFMPlayer() {
 }
 
 function setKissChannel(channel) {
-  const isTwitch = channel === "twitch";
-  const twitchParent = location.hostname || "localhost";
-  const pageUrl = isTwitch
-    ? `https://player.twitch.tv/?channel=livekiss&parent=${encodeURIComponent(twitchParent)}&autoplay=true`
-    : `https://www.kiss.com.tw/radio_hq.php?fm=999&player=${channel}`;
-  const channelName = channel === "lh" ? "官方頻道一" : channel === "youtube" ? "官方頻道二" : "Twitch 直播";
+  const pageUrl = `https://www.kiss.com.tw/radio_hq.php?fm=999&player=${channel}`;
+  const channelName = channel === "lh" ? "官方頻道一" : "官方頻道二";
   elements["official-player-kicker"].textContent = "OFFICIAL LIVE STREAM";
   elements["official-player-title"].textContent = "KISS RADIO FM99.9";
   elements["official-player-frame"].hidden = false;
   document.querySelector(".kiss-channel-picker").hidden = false;
   elements["official-player-frame"].src = pageUrl;
-  elements["official-player-hint"].textContent = isTwitch
-    ? "使用 Twitch LiveKiss 直播；請在播放器中啟動播放並調整音量。"
-    : `使用 KISS RADIO ${channelName}；若播放器未載入，可改用新分頁開啟。`;
-  elements["official-player-link"].href = isTwitch
-    ? "https://www.twitch.tv/livekiss"
-    : pageUrl;
-  elements["official-player-link"].innerHTML = `在新分頁開啟 ${isTwitch ? "Twitch LiveKiss" : `KISS RADIO ${channelName}`} <span aria-hidden="true">↗</span>`;
+  elements["official-player-hint"].textContent = `使用 KISS RADIO ${channelName}；若播放器未載入，可改用新分頁開啟。`;
+  elements["official-player-link"].href = pageUrl;
+  elements["official-player-link"].innerHTML = `在新分頁開啟 KISS RADIO ${channelName} <span aria-hidden="true">↗</span>`;
   document.querySelectorAll("[data-kiss-channel]").forEach(button => {
     button.setAttribute("aria-pressed", String(button.dataset.kissChannel === channel));
   });

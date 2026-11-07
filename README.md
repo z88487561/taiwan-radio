@@ -31,7 +31,7 @@ https://z88487561.github.io/taiwan-radio/
 
 - 電台資料由 [Radio Browser](https://www.radio-browser.info/) 社群 API 與 [Radios.tw](https://radios.tw/) 提供。
 - 台中好事 90.3 為補充電台，播放時會開啟[好事聯播網官方播放器](http://www.bestradio.com.tw/link.aspx)，並由使用者選擇「好事903電台」。官網串流網址具有時效性，因此不在應用程式中保存固定串流網址。
-- KISS RADIO 播放器使用 KISS RADIO 官方頁面及 Twitch 嵌入播放器。
+- KISS RADIO FM99.9 提供官方頻道一與官方頻道二切換。
 - 應用程式外殼可由 Service Worker 快取；**電台目錄、電台串流及外部播放器仍需網路連線**。快取頁面不代表可離線收聽網路電台。
 - 串流可用性、播放格式及嵌入服務限制由各電台或服務提供者決定，可能因瀏覽器或地區而異。
 
