@@ -1,24 +1,29 @@
-const CACHE_NAME = "island-fm-shell-v14";
-const SHELL_FILES = ["./", "./index.html", "./styles.css", "./app.js", "./manifest.json", "./icon.svg"];
+// 改版時把版本號 +1，使用者下次開啟就會更新快取
+const CACHE = 'ledger-v14';
+const ASSETS = ['./', 'index.html', 'jsQR.js', 'tailwind.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png', 'icons/apple-touch-icon.png'];
 
-self.addEventListener("install", event => {
-  event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(SHELL_FILES)).then(() => self.skipWaiting()));
+self.addEventListener('install', e => {
+  // cache:'reload' 繞過瀏覽器 HTTP 快取，確保這一版的所有檔案都是最新、彼此一致
+  e.waitUntil(caches.open(CACHE).then(c => Promise.all(ASSETS.map(u => c.add(new Request(u, { cache: 'reload' }))))).then(() => self.skipWaiting()));
 });
-
-self.addEventListener("activate", event => {
-  event.waitUntil(caches.keys().then(keys => Promise.all(
-    keys.filter(key => key !== CACHE_NAME).map(key => caches.delete(key))
-  )).then(() => self.clients.claim()));
+self.addEventListener('activate', e => {
+  e.waitUntil(caches.keys().then(ks => Promise.all(ks.filter(k => k.startsWith('ledger-') && k !== CACHE).map(k => caches.delete(k)))).then(() => self.clients.claim()));
 });
-
-self.addEventListener("fetch", event => {
-  const request = event.request;
-  if (request.method !== "GET" || new URL(request.url).origin !== self.location.origin) return;
-  event.respondWith(caches.match(request).then(cached => cached || fetch(request).then(response => {
-    if (response.ok && response.type === "basic") {
-      const copy = response.clone();
-      caches.open(CACHE_NAME).then(cache => cache.put(request, copy));
-    }
-    return response;
-  })));
+self.addEventListener('fetch', e => {
+  const req = e.request;
+  if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
+  if (req.mode === 'navigate') {
+    // 頁面：先連網取最新（只快取成功的回應），離線時用快取
+    e.respondWith(fetch(req).then(res => {
+      if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put('index.html', copy)); return res; }
+      return caches.match('index.html').then(hit => hit || res);
+    }).catch(() => caches.match('index.html')));
+    return;
+  }
+  // 靜態檔：先給快取，同時背景更新
+  e.respondWith(caches.open(CACHE).then(async c => {
+    const hit = await c.match(req, { ignoreSearch: true });
+    const net = fetch(req).then(res => { if (res.ok) c.put(req, res.clone()); return res; }).catch(() => hit || Response.error());
+    return hit || net;
+  }));
 });
