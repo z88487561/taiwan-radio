@@ -485,13 +485,92 @@ function setActivePlayer(player) {
     elements["seek-bar"].value = "0";
     elements["seek-bar"].disabled = true;
   }
+  syncMediaSession();
 }
 
 function updateNowPlaying(title, subtitle, music = false) {
   elements["now-title"].textContent = title;
   elements["now-subtitle"].textContent = subtitle;
   elements["cover-art"].classList.toggle("is-music", music);
+  syncMediaSession();
 }
+
+// ---- 系統媒體控制（狀態列 / 鎖定畫面通知）----
+function setMediaAction(action, handler) {
+  try { navigator.mediaSession.setActionHandler(action, handler); } catch { /* 瀏覽器不支援該動作 */ }
+}
+
+function syncMediaSession() {
+  if (!("mediaSession" in navigator)) return;
+  const session = navigator.mediaSession;
+  const player = state.activePlayer;
+  const isMusic = player === "music";
+  const audio = player === "radio" ? elements["radio-audio"] : isMusic ? elements["music-audio"] : null;
+
+  if (player && typeof MediaMetadata === "function") {
+    const title = elements["now-title"].textContent;
+    const artist = elements["now-subtitle"].textContent;
+    const key = `${title}\n${artist}`;
+    if (state.mediaKey !== key) {
+      state.mediaKey = key;
+      try {
+        session.metadata = new MediaMetadata({
+          title,
+          artist,
+          album: "島聲 FM",
+          artwork: [{ src: "./icon.svg", sizes: "any", type: "image/svg+xml" }]
+        });
+      } catch { /* ignore */ }
+    }
+  } else if (!player) {
+    state.mediaKey = null;
+    session.metadata = null;
+  }
+
+  session.playbackState = !audio ? "none" : audio.paused ? "paused" : "playing";
+
+  const canSkip = isMusic && state.playlist.length > 0;
+  setMediaAction("play", player ? () => { if (audio.paused) togglePlayback(); } : null);
+  setMediaAction("pause", player ? () => { if (!audio.paused) togglePlayback(); } : null);
+  setMediaAction("stop", player ? stopAll : null);
+  setMediaAction("previoustrack", canSkip ? playPrevious : null);
+  setMediaAction("nexttrack", canSkip ? () => playNext() : null);
+  setMediaAction("seekto", isMusic ? details => {
+    const music = elements["music-audio"];
+    if (details && Number.isFinite(details.seekTime) && Number.isFinite(music.duration)) {
+      music.currentTime = Math.max(0, Math.min(details.seekTime, music.duration));
+    }
+  } : null);
+  if (!isMusic) {
+    try { session.setPositionState(); } catch { /* ignore */ }
+  }
+}
+
+function updateMediaPosition() {
+  if (!("mediaSession" in navigator) || state.activePlayer !== "music") return;
+  const audio = elements["music-audio"];
+  if (!Number.isFinite(audio.duration) || audio.duration <= 0) return;
+  const second = Math.floor(audio.currentTime);
+  if (state.mediaPositionSecond === second) return;
+  state.mediaPositionSecond = second;
+  try {
+    navigator.mediaSession.setPositionState({
+      duration: audio.duration,
+      playbackRate: audio.playbackRate || 1,
+      position: Math.min(audio.currentTime, audio.duration)
+    });
+  } catch { /* ignore */ }
+}
+
+// 背景/鎖屏時 AudioContext 可能被瀏覽器暫停，音訊經過它就會變成沒聲音
+function resumeAudioContext() {
+  const context = state.audioContext;
+  if (!context || context.state === "running") return;
+  if (state.activePlayer === "music" && !elements["music-audio"].paused) {
+    context.resume().catch(() => {});
+  }
+}
+document.addEventListener("visibilitychange", resumeAudioContext);
 
 async function playStation(station) {
   if (station.externalPlayer) {
@@ -705,6 +784,7 @@ function initializeAudioProcessing() {
     limiter.attack.value = 0.003;
     limiter.release.value = 0.18;
     source.connect(analyser).connect(compressor).connect(levelGain).connect(limiter).connect(context.destination);
+    context.onstatechange = resumeAudioContext;
     state.audioContext = context;
     state.analyser = analyser;
     state.compressor = compressor;
@@ -773,7 +853,7 @@ function playTrack(index, remember = true) {
   state.pendingTrackIndex = index;
   elements["previous-button"].disabled = true;
   elements["next-button"].disabled = true;
-  stopRadio();
+  if (state.activeStation || state.activePlayer === "radio" || elements["radio-audio"].getAttribute("src")) stopRadio();
   const track = state.playlist[index];
   const audio = elements["music-audio"];
   initializeAudioProcessing();
@@ -784,10 +864,6 @@ function playTrack(index, remember = true) {
   if (previousIndex < 0 && !alreadyPrepared) showToast("正在準備音樂…");
   resolveTrackUrl(track).then(url => {
     if (requestId !== state.playRequestId) return;
-    audio.pause();
-    audio.removeAttribute("src");
-    audio.load();
-    if (previousIndex !== index) releaseTrackSource(previousIndex);
     if (remember && previousIndex >= 0 && previousIndex !== index) state.playHistory.push(previousIndex);
     state.currentTrack = index;
     state.shuffleNextTrack = null;
@@ -796,7 +872,9 @@ function playTrack(index, remember = true) {
     state.loadingTrack = false;
     elements["previous-button"].disabled = false;
     elements["next-button"].disabled = false;
+    // 直接換 src，不先 pause/清空/load：背景時中斷播放階段可能讓系統回收音訊
     audio.src = url;
+    if (previousIndex !== index) releaseTrackSource(previousIndex);
     audio.volume = Number(elements["volume-control"].value);
     if (state.levelGain && state.audioContext) {
       state.levelGain.gain.setTargetAtTime(1, state.audioContext.currentTime, 0.08);
@@ -1050,6 +1128,7 @@ function updateProgress() {
   elements["duration-time"].textContent = formatTime(duration);
   elements["seek-bar"].value = String(Math.round(audio.currentTime / duration * 1000));
   elements["seek-bar"].disabled = false;
+  updateMediaPosition();
 }
 
 function renderPlaylist() {
