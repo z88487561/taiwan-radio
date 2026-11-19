@@ -132,7 +132,7 @@ const state = {
   gainBuffer: null,
   smoothedRms: 0,
   shuffle: false,
-  balance: true,
+  balance: false,
   audioContext: null,
   objectUrls: [],
   playHistory: [],
@@ -856,7 +856,8 @@ function playTrack(index, remember = true) {
   if (state.activeStation || state.activePlayer === "radio" || elements["radio-audio"].getAttribute("src")) stopRadio();
   const track = state.playlist[index];
   const audio = elements["music-audio"];
-  initializeAudioProcessing();
+  // 只有開啟平衡音量才建立 Web Audio；建立後音訊會一直經過它，背景/鎖屏時可能被系統暫停
+  if (state.balance) initializeAudioProcessing();
   if (state.audioContext && state.audioContext.state === "suspended") state.audioContext.resume().catch(error => {
     console.error("無法啟用音訊播放：", error);
   });
@@ -1005,8 +1006,9 @@ async function prepareOpusTrack(track) {
 }
 
 async function getTrackPlaybackUrl(track) {
-  const isOpus = await isOpusTrack(track);
-  if (isOpus && !document.createElement("audio").canPlayType('audio/ogg; codecs="opus"')) {
+  // 瀏覽器原生支援 Opus 時不必先讀檔判斷，換歌（尤其在背景）少一次非同步檔案讀取
+  const nativeOpus = document.createElement("audio").canPlayType('audio/ogg; codecs="opus"');
+  if (!nativeOpus && await isOpusTrack(track)) {
     return prepareOpusTrack(track);
   }
   if (!track.sourceUrl) {
@@ -1337,6 +1339,7 @@ elements["balance-button"].addEventListener("click", () => {
   state.balance = !state.balance;
   elements["balance-button"].classList.toggle("active", state.balance);
   elements["balance-button"].setAttribute("aria-pressed", String(state.balance));
+  if (state.balance) initializeAudioProcessing();
   setTrackGainNormalization(state.balance && state.activePlayer === "music");
 });
 elements["previous-button"].addEventListener("click", playPrevious);
