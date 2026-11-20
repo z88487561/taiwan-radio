@@ -157,6 +157,14 @@
           <div id="track-list" class="track-list">
             <div class="music-empty"><span aria-hidden="true">♫</span><strong>你的音樂，還在路上</strong><p>從裝置選取音樂檔案，或一次匯入整個資料夾。</p></div>
           </div>
+          <details class="diag-panel" id="diag-panel">
+            <summary>診斷記錄（背景停播時，請回來複製給開發者）</summary>
+            <div class="diag-actions">
+              <button class="secondary-button" id="diag-copy" type="button">複製記錄</button>
+              <button class="secondary-button" id="diag-clear" type="button">清除</button>
+            </div>
+            <pre id="diag-log"></pre>
+          </details>
         </section>
       </main>
 

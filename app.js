@@ -4,6 +4,91 @@ const PAGE_SIZE = 12;
 const TRACK_ROW_HEIGHT = 57;
 const TRACK_WINDOW_SIZE = 60;
 const FAVORITES_KEY = "island-fm-favorite-stations";
+const DIAG_KEY = "island-fm-diag";
+const LIBRARY_KEY = "island-fm-last-library";
+
+// ---- 診斷記錄（背景停播時，回到 App 後可在音樂頁最下方複製）----
+let diagLines = (() => {
+  try { return JSON.parse(localStorage.getItem(DIAG_KEY) || "[]"); } catch { return []; }
+})();
+function diag(message) {
+  diagLines.push(`${new Date().toTimeString().slice(0, 8)} ${message}`);
+  if (diagLines.length > 150) diagLines.splice(0, diagLines.length - 150);
+  try { localStorage.setItem(DIAG_KEY, JSON.stringify(diagLines)); } catch { /* ignore */ }
+  const panel = document.getElementById("diag-panel");
+  if (panel?.open) document.getElementById("diag-log").textContent = diagLines.join("\n");
+}
+
+// ---- 記住上次的播放清單（瀏覽器無法跨次保留檔案存取權，所以存「清單資訊＋播放位置」，重新選同一資料夾即可接續）----
+function trackKey(file) {
+  return `${file.webkitRelativePath || file.name}|${file.size}|${file.lastModified}`;
+}
+function readSavedLibrary() {
+  try { return JSON.parse(localStorage.getItem(LIBRARY_KEY) || "null"); } catch { return null; }
+}
+function saveLibrary() {
+  if (!state.playlist.length) return;
+  const track = state.playlist[state.currentTrack];
+  try {
+    localStorage.setItem(LIBRARY_KEY, JSON.stringify({
+      count: state.playlist.length,
+      current: track ? trackKey(track.file) : null,
+      title: track ? track.title : null,
+      position: Math.floor(elements["music-audio"].currentTime || 0),
+      shuffle: state.shuffle
+    }));
+  } catch { /* 空間不足時略過 */ }
+}
+function savedLibraryHint() {
+  const saved = readSavedLibrary();
+  if (!saved?.count) return "";
+  return `上次：${saved.title ? `「${saved.title}」· ` : ""}共 ${saved.count} 首，重新選取同一個資料夾即可接續`;
+}
+// 重新選取資料夾後：回到上次的那首與播放位置（不自動播放）。回傳 true 表示已開始還原。
+function restoreLastSession() {
+  if (state.currentTrack >= 0 || state.restoreTried) return false;
+  state.restoreTried = true;
+  const saved = readSavedLibrary();
+  if (!saved?.current) return false;
+  const index = state.playlist.findIndex(track => trackKey(track.file) === saved.current);
+  if (index < 0) return false;
+  const track = state.playlist[index];
+  state.currentTrack = index;
+  if (typeof saved.shuffle === "boolean") {
+    state.shuffle = saved.shuffle;
+    elements["shuffle-button"].classList.toggle("active", state.shuffle);
+    elements["shuffle-button"].setAttribute("aria-pressed", String(state.shuffle));
+  }
+  resolveTrackUrl(track).then(url => {
+    if (state.currentTrack !== index || state.activePlayer || state.loadingTrack) return;
+    const audio = elements["music-audio"];
+    const position = Number(saved.position) || 0;
+    audio.addEventListener("loadedmetadata", () => {
+      if (position > 0 && Number.isFinite(audio.duration) && position < audio.duration - 2) audio.currentTime = position;
+      saveLibrary();
+    }, { once: true });
+    audio.src = url;
+    updateNowPlaying(track.title, track.artist || "本地音樂", true);
+    elements["track-list"].scrollTop = Math.max(0, index - 8) * TRACK_ROW_HEIGHT;
+    renderPlaylist();
+    setActivePlayer("music");
+    showToast(`已回到上次播放的「${track.title}」，按 ▶ 繼續。`);
+  }).catch(error => {
+    console.warn("無法還原上次的播放位置：", error);
+    state.currentTrack = -1;
+    renderPlaylist();
+  });
+  return true;
+}
+// 需要解碼 OPUS 時，除了現在這首，往後保留兩首已解碼的
+function decodedKeepSet(index) {
+  const keep = new Set([index]);
+  if (!state.shuffle && state.playlist.length > 1) {
+    keep.add((index + 1) % state.playlist.length);
+    keep.add((index + 2) % state.playlist.length);
+  }
+  return keep;
+}
 const KISS_STATION = {
   stationuuid: "kissradio-fm999-official",
   name: "KISS RADIO 大眾廣播 FM99.9",
@@ -560,6 +645,7 @@ function updateMediaPosition() {
       position: Math.min(audio.currentTime, audio.duration)
     });
   } catch { /* ignore */ }
+  if (second % 5 === 0) saveLibrary();
 }
 
 // 背景/鎖屏時 AudioContext 可能被瀏覽器暫停，音訊經過它就會變成沒聲音
@@ -784,7 +870,10 @@ function initializeAudioProcessing() {
     limiter.attack.value = 0.003;
     limiter.release.value = 0.18;
     source.connect(analyser).connect(compressor).connect(levelGain).connect(limiter).connect(context.destination);
-    context.onstatechange = resumeAudioContext;
+    context.onstatechange = () => {
+      diag(`AudioContext ${context.state}`);
+      resumeAudioContext();
+    };
     state.audioContext = context;
     state.analyser = analyser;
     state.compressor = compressor;
@@ -861,15 +950,18 @@ function playTrack(index, remember = true) {
   if (state.audioContext && state.audioContext.state === "suspended") state.audioContext.resume().catch(error => {
     console.error("無法啟用音訊播放：", error);
   });
+  let started = false;
+  const resolveStarted = performance.now();
+  diag(`切歌 #${index} ${track.file.name} (${(track.file.size / 1048576).toFixed(1)}MB, ${track.file.type || "?"})`);
   const alreadyPrepared = Boolean(track.decodedUrl || track.sourceUrl);
   if (previousIndex < 0 && !alreadyPrepared) showToast("正在準備音樂…");
   resolveTrackUrl(track).then(url => {
     if (requestId !== state.playRequestId) return;
+    diag(`檔案就緒 ${Math.round(performance.now() - resolveStarted)}ms ${track.decodedUrl ? "已解碼WAV" : "原生播放"} ${document.visibilityState}`);
     if (remember && previousIndex >= 0 && previousIndex !== index) state.playHistory.push(previousIndex);
     state.currentTrack = index;
     state.shuffleNextTrack = null;
-    const nextIndex = state.shuffle ? -1 : (index + 1) % state.playlist.length;
-    releaseDecodedTracks(new Set([index, nextIndex]));
+    releaseDecodedTracks(decodedKeepSet(index));
     state.loadingTrack = false;
     elements["previous-button"].disabled = false;
     elements["next-button"].disabled = false;
@@ -890,20 +982,34 @@ function playTrack(index, remember = true) {
     }
     renderPlaylist();
     setActivePlayer("music");
+    started = true;
     return audio.play();
   }).then(() => {
     if (requestId === state.playRequestId) {
+      diag("play() 成功");
       setActivePlayer("music");
       startTrackGainNormalization();
       scheduleNextTrackPreload();
+      saveLibrary();
     }
   }).catch(error => {
     if (requestId !== state.playRequestId) return;
     console.error("無法播放本地音樂：", error);
+    diag(`play() 失敗 ${error.name}: ${error.message} ${document.visibilityState}`);
     state.loadingTrack = false;
     elements["previous-button"].disabled = false;
     elements["next-button"].disabled = false;
-    setActivePlayer(elements["music-audio"].paused ? null : "music");
+    // 已經換了 src 但 play() 被拒絕時，保留通知（變成暫停），讓你能從通知按播放；同時自動重試一次
+    setActivePlayer(started || !elements["music-audio"].paused ? "music" : null);
+    if (started) {
+      state.resumeOnVisible = document.hidden;
+      setTimeout(() => {
+        const retry = elements["music-audio"];
+        if (requestId === state.playRequestId && retry.paused && state.currentTrack === index) {
+          retry.play().then(() => diag("重試 play() 成功")).catch(e => diag(`重試 play() 失敗 ${e.name}`));
+        }
+      }, 1500);
+    }
     renderPlaylist();
     showToast(error.message || "無法播放這個音樂檔，請確認檔案格式是否受支援。");
   });
@@ -1039,19 +1145,26 @@ function scheduleNextTrackPreload() {
   state.preloadTimer = setTimeout(async () => {
     state.preloadTimer = null;
     const task = (async () => {
-      if (!await isOpusTrack(nextTrack) ||
-          document.createElement("audio").canPlayType('audio/ogg; codecs="opus"')) return;
-      if (state.shuffle) state.shuffleNextTrack = nextIndex;
-      await prepareOpusTrack(nextTrack);
-      if (state.currentTrack !== currentIndex) return;
-      const keep = new Set([state.currentTrack, getNextTrackIndex()]);
-      releaseDecodedTracks(keep);
+      if (document.createElement("audio").canPlayType('audio/ogg; codecs="opus"')) return;
+      const targets = [nextIndex];
+      if (!state.shuffle && state.playlist.length > 2) targets.push((nextIndex + 1) % state.playlist.length);
+      for (const target of targets) {
+        const candidate = state.playlist[target];
+        if (!candidate || target === currentIndex || candidate.removed) continue;
+        if (!await isOpusTrack(candidate)) continue;
+        if (state.shuffle) state.shuffleNextTrack = target;
+        diag(`預載解碼 #${target}`);
+        await prepareOpusTrack(candidate);
+        if (state.currentTrack !== currentIndex) return;
+        releaseDecodedTracks(decodedKeepSet(currentIndex));
+      }
     })();
     state.preloadPromise = task;
     try {
       await task;
     } catch (error) {
       console.warn("預載入下一首 OPUS 歌曲失敗；切歌時會再嘗試解碼：", error);
+      diag(`預載解碼失敗 ${error.message}`);
     } finally {
       if (state.preloadPromise === task) state.preloadPromise = null;
       const next = getNextTrackIndex();
@@ -1141,7 +1254,7 @@ function renderPlaylist() {
   if (!state.playlist.length) {
     elements["track-list"].innerHTML = `<div class="music-empty"><span aria-hidden="true">♫</span><strong>你的音樂，還在路上</strong><p>從裝置選取音樂檔案，或一次匯入整個資料夾。</p></div>`;
     elements["playlist-count"].textContent = "尚未加入音樂";
-    elements["playlist-subtitle"].textContent = "選取音樂檔案開始播放";
+    elements["playlist-subtitle"].textContent = savedLibraryHint() || "選取音樂檔案開始播放";
     return;
   }
   const scrollTop = elements["track-list"].scrollTop;
@@ -1208,7 +1321,10 @@ function addFiles(fileList, fromDirectory) {
   state.directoryLoaded = state.directoryLoaded || fromDirectory;
   renderPlaylist();
   if (state.activePlayer === "music") scheduleNextTrackPreload();
-  showToast(`已加入 ${freshFiles.length} 首歌曲。`);
+  if (!restoreLastSession()) {
+    saveLibrary();
+    showToast(`已加入 ${freshFiles.length} 首歌曲。`);
+  }
 }
 
 function removeTrack(index) {
@@ -1333,6 +1449,7 @@ elements["shuffle-button"].addEventListener("click", () => {
   state.shuffleNextTrack = null;
   elements["shuffle-button"].classList.toggle("active", state.shuffle);
   elements["shuffle-button"].setAttribute("aria-pressed", String(state.shuffle));
+  saveLibrary();
   if (state.activePlayer === "music") scheduleNextTrackPreload();
 });
 elements["balance-button"].addEventListener("click", () => {
@@ -1378,6 +1495,21 @@ elements["music-audio"].addEventListener("pause", () => {
 });
 elements["music-audio"].addEventListener("ended", () => {
   if (!state.loadingTrack) playNext(true);
+});
+["play", "pause", "ended", "error", "stalled", "waiting", "emptied", "abort"].forEach(name => {
+  elements["music-audio"].addEventListener(name, () => {
+    const audio = elements["music-audio"];
+    const code = name === "error" && audio.error ? ` code=${audio.error.code}` : "";
+    diag(`audio ${name} #${state.currentTrack} t=${Math.round(audio.currentTime)} ${document.visibilityState}${code}`);
+  });
+});
+document.addEventListener("visibilitychange", () => {
+  diag(`頁面 ${document.visibilityState}`);
+  if (document.hidden) { saveLibrary(); return; }
+  if (!state.resumeOnVisible) return;
+  state.resumeOnVisible = false;
+  const audio = elements["music-audio"];
+  if (audio.paused && state.currentTrack >= 0 && state.activePlayer === "music") audio.play().catch(() => {});
 });
 elements["radio-audio"].addEventListener("play", () => setActivePlayer("radio"));
 elements["radio-audio"].addEventListener("pause", () => {
@@ -1433,10 +1565,35 @@ elements["install-button"].addEventListener("click", async () => {
   state.installPrompt = null;
   elements["install-button"].hidden = true;
 });
-window.addEventListener("pagehide", () => {
+window.addEventListener("pagehide", event => {
+  saveLibrary();
+  if (event.persisted) return; // 只是進入背景快取，不要把還在用的音檔網址作廢
   stopTrackGainNormalization();
   state.objectUrls.forEach(url => URL.revokeObjectURL(url));
 });
+
+diag(`啟動 ${navigator.userAgent.match(/(SamsungBrowser|Chrome|Version)\/[\d.]+/)?.[0] || "?"} nativeOpus=${document.createElement("audio").canPlayType('audio/ogg; codecs="opus"') || "無"}`);
+{
+  const panel = document.getElementById("diag-panel");
+  const box = document.getElementById("diag-log");
+  const render = () => { if (box) box.textContent = diagLines.join("\n") || "（目前沒有記錄）"; };
+  panel?.addEventListener("toggle", render);
+  document.getElementById("diag-copy")?.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(diagLines.join("\n"));
+      showToast("已複製記錄。");
+    } catch {
+      render();
+      showToast("無法自動複製，請長按記錄文字手動複製。");
+    }
+  });
+  document.getElementById("diag-clear")?.addEventListener("click", () => {
+    diagLines = [];
+    try { localStorage.removeItem(DIAG_KEY); } catch { /* ignore */ }
+    render();
+  });
+}
+if (!state.playlist.length) renderPlaylist();
 
 if ("serviceWorker" in navigator && location.protocol !== "file:") {
   window.addEventListener("load", () => navigator.serviceWorker.register("./sw.js").catch(error => {
