@@ -149,8 +149,8 @@
           <div class="music-controls">
             <div class="playlist-summary"><span class="playlist-icon">♫</span><span><strong id="playlist-count">尚未加入音樂</strong><small id="playlist-subtitle">選取音樂檔案開始播放</small></span></div>
             <div class="playback-options">
-              <button class="option-button" id="shuffle-button" type="button" aria-pressed="false" title="亂序播放">⤨ <span>亂序</span></button>
-              <button class="option-button" id="loop-button" type="button" aria-pressed="false" title="循環播放整個清單">↻ <span>循環</span></button>
+              <button class="option-button active" id="shuffle-button" type="button" aria-pressed="true" title="亂序播放">⤨ <span>亂序</span></button>
+              <button class="option-button active" id="loop-button" type="button" aria-pressed="true" title="循環播放整個清單">↻ <span>循環</span></button>
               <button class="option-button active" id="balance-button" type="button" aria-pressed="true" title="平衡音量">◖ <span>平衡音量</span></button>
             </div>
           </div>
@@ -214,5 +214,22 @@
       </dialog>
       <div id="toast" class="toast" role="status" aria-live="polite"></div>
     </div>
+    <script>
+      // 檢查 app.js 是不是和這個頁面同一版；不是的話清掉舊快取並重新載入一次
+      window.addEventListener("load", function () {
+        var expected = "2026-11-20-r5";
+        if (window.APP_VERSION === expected) { try { sessionStorage.removeItem("island-fm-repair"); } catch (e) {} return; }
+        var tried = false;
+        try { tried = sessionStorage.getItem("island-fm-repair") === "1"; sessionStorage.setItem("island-fm-repair", "1"); } catch (e) {}
+        if (tried) {
+          document.body.insertAdjacentHTML("afterbegin", '<div style="position:sticky;top:0;z-index:99;padding:10px 14px;background:#b3261e;color:#fff;font-size:14px">app.js 版本不符（目前：' + (window.APP_VERSION || "舊版") + '，應為 ' + expected + '）。請確認 app.js 有一起上傳，並清除網站資料後重開。</div>');
+          return;
+        }
+        var jobs = [];
+        if (window.caches) jobs.push(caches.keys().then(function (ks) { return Promise.all(ks.filter(function (k) { return k.indexOf("taiwan-radio-") === 0; }).map(function (k) { return caches.delete(k); })); }));
+        if (navigator.serviceWorker) jobs.push(navigator.serviceWorker.getRegistrations().then(function (rs) { return Promise.all(rs.map(function (r) { return r.unregister(); })); }));
+        Promise.all(jobs).catch(function () {}).then(function () { location.reload(); });
+      });
+    </script>
   </body>
 </html>

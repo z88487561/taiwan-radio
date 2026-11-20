@@ -1,3 +1,4 @@
+window.APP_VERSION = "2026-11-20-r5"; // index.html 會檢查，確保頁面和程式是同一版
 const API_BASE = "https://de1.api.radio-browser.info/json";
 const CATALOG_LIMIT = 1000;
 const PAGE_SIZE = 12;
@@ -221,8 +222,8 @@ const state = {
   preloadTimer: null,
   preloadPromise: null,
   gainBuffer: null,
-  shuffle: false,
-  loop: false,
+  shuffle: true,
+  loop: true,
   balance: true,
   objectUrls: [],
   playHistory: [],
@@ -899,7 +900,7 @@ async function analyzeTrackGain(track) {
 
 // 開始播放前最多等 0.4 秒讓分析完成；通常下一首早在上一首播放時就分析好了
 function waitForGain(track) {
-  if (!state.balance || trackGains[trackKey(track.file)] !== undefined) return Promise.resolve();
+  if (document.hidden || !state.balance || trackGains[trackKey(track.file)] !== undefined) return Promise.resolve(); // 背景時不等待，直接播
   return Promise.race([analyzeTrackGain(track), new Promise(resolve => setTimeout(resolve, 400))]);
 }
 
@@ -1554,7 +1555,7 @@ window.addEventListener("pagehide", event => {
   state.objectUrls.forEach(url => URL.revokeObjectURL(url));
 });
 
-diag(`啟動 ${navigator.userAgent.match(/(SamsungBrowser|Chrome|Version)\/[\d.]+/)?.[0] || "?"} nativeOpus=${document.createElement("audio").canPlayType('audio/ogg; codecs="opus"') || "無"}`);
+diag(`啟動 版本 ${window.APP_VERSION} ${navigator.userAgent.match(/(SamsungBrowser|Chrome|Version)\/[\d.]+/)?.[0] || "?"} nativeOpus=${document.createElement("audio").canPlayType('audio/ogg; codecs="opus"') || "無"}`);
 {
   const panel = document.getElementById("diag-panel");
   const box = document.getElementById("diag-log");
