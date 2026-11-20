@@ -1,6 +1,6 @@
 // 改版時把版本號 +1
-const CACHE = 'taiwan-radio-v5';
-const ASSETS = ['./', 'index.html', 'app.js', 'styles.css', 'manifest.json', 'icon.svg'];
+const CACHE = 'taiwan-radio-v6';
+const ASSETS = ['./', 'index.html', 'app.js', 'styles.css', 'manifest.json', 'icon.svg', 'icons/icon-192.png', 'icons/icon-512.png', 'icons/maskable-512.png', 'icons/apple-touch-icon.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(
