@@ -80,6 +80,94 @@ function restoreLastSession() {
   });
   return true;
 }
+// ---- 接力播放：歌曲結束前 0.8 秒，由備用 <audio> 先開始播下一首，再停掉舊的 ----
+// 讓分頁在換歌的瞬間始終有一個元素在播放，避免背景時因為「播放中斷」而被系統收回音訊焦點/通知。
+const HANDOFF_SECONDS = 0.8;
+function nativeOpusSupported() {
+  return Boolean(document.createElement("audio").canPlayType('audio/ogg; codecs="opus"'));
+}
+async function armStandby() {
+  state.standbyIndex = -1;
+  if (state.audioContext) return; // 平衡音量的處理鏈只接在一個元素上，這時沿用原本的換歌流程
+  if (state.activePlayer !== "music" || state.currentTrack < 0 || !state.playlist.length) return;
+  if (!state.shuffle && state.currentTrack === state.playlist.length - 1) return; // 清單最後一首：自然結束
+  const nextIndex = getNextTrackIndex();
+  if (nextIndex < 0 || nextIndex === state.currentTrack) return;
+  const next = state.playlist[nextIndex];
+  if (!next || next.removed) return;
+  if (!nativeOpusSupported() && /\.(opus|ogg|oga)$/i.test(next.file.name)) return; // 需要先解碼的檔案不走接力
+  const currentIndex = state.currentTrack;
+  try {
+    if (state.shuffle) state.shuffleNextTrack = nextIndex;
+    const url = await getTrackPlaybackUrl(next);
+    if (state.currentTrack !== currentIndex || state.audioContext) return;
+    const standby = state.standby;
+    standby.src = url;
+    standby.volume = Number(elements["volume-control"].value);
+    standby.load();
+    state.standbyIndex = nextIndex;
+    diag(`備用就緒 #${nextIndex}`);
+  } catch (error) {
+    diag(`備用失敗 ${error.message}`);
+  }
+}
+function maybeHandoff() {
+  if (state.handingOff || state.standbyIndex < 0 || state.loadingTrack) return;
+  const audio = elements["music-audio"];
+  if (audio.paused || !Number.isFinite(audio.duration) || audio.duration < 8) return;
+  if (audio.duration - audio.currentTime > HANDOFF_SECONDS) return;
+  const index = state.standbyIndex;
+  if (index !== getNextTrackIndex()) { state.standbyIndex = -1; return; }
+  state.handingOff = true;
+  const standby = state.standby;
+  diag(`接力開始 #${index} 剩 ${(audio.duration - audio.currentTime).toFixed(2)}s ${document.visibilityState}`);
+  standby.play().then(() => {
+    state.handingOff = false;
+    if (elements["music-audio"] !== audio || state.standbyIndex !== index) { standby.pause(); return; }
+    finishHandoff(index);
+  }).catch(error => {
+    state.handingOff = false;
+    state.standbyIndex = -1;
+    diag(`接力失敗 ${error.name}: ${error.message}`);
+    if (audio.ended && elements["music-audio"] === audio && !state.loadingTrack) playNext(true);
+  });
+}
+function finishHandoff(index) {
+  const old = elements["music-audio"];
+  const fresh = state.standby;
+  const previousIndex = state.currentTrack;
+  const track = state.playlist[index];
+  state.playRequestId += 1;
+  clearTimeout(state.preloadTimer);
+  state.preloadTimer = null;
+  if (previousIndex >= 0 && previousIndex !== index) state.playHistory.push(previousIndex);
+  state.currentTrack = index;
+  state.shuffleNextTrack = null;
+  state.standbyIndex = -1;
+  elements["music-audio"] = fresh;
+  state.standby = old;
+  old.pause();
+  old.removeAttribute("src");
+  old.load();
+  if (previousIndex !== index) releaseTrackSource(previousIndex);
+  releaseDecodedTracks(decodedKeepSet(index));
+  fresh.volume = Number(elements["volume-control"].value);
+  state.activePlayer = "music";
+  state.smoothedRms = 0;
+  if (Number.isFinite(fresh.duration)) track.duration = fresh.duration;
+  updateNowPlaying(track.title, track.artist || "本地音樂", true);
+  updateProgress();
+  const firstVisible = Math.floor(elements["track-list"].scrollTop / TRACK_ROW_HEIGHT);
+  if (index < firstVisible || index >= firstVisible + TRACK_WINDOW_SIZE) {
+    elements["track-list"].scrollTop = Math.max(0, index - 8) * TRACK_ROW_HEIGHT;
+  }
+  renderPlaylist();
+  setActivePlayer("music");
+  scheduleNextTrackPreload();
+  saveLibrary();
+  diag(`接力完成 #${index} ${track.title}`);
+  armStandby();
+}
 // 需要解碼 OPUS 時，除了現在這首，往後保留兩首已解碼的
 function decodedKeepSet(index) {
   const keep = new Set([index]);
@@ -582,7 +670,9 @@ function updateNowPlaying(title, subtitle, music = false) {
 
 // ---- 系統媒體控制（狀態列 / 鎖定畫面通知）----
 function setMediaAction(action, handler) {
-  try { navigator.mediaSession.setActionHandler(action, handler); } catch { /* 瀏覽器不支援該動作 */ }
+  try {
+    navigator.mediaSession.setActionHandler(action, handler ? (...args) => { diag(`系統控制 ${action}`); return handler(...args); } : null);
+  } catch { /* 瀏覽器不支援該動作 */ }
 }
 
 function syncMediaSession() {
@@ -834,6 +924,12 @@ function stopMusic(resetPosition = true) {
   if (resetPosition && Number.isFinite(audio.duration)) audio.currentTime = 0;
   audio.removeAttribute("src");
   audio.load();
+  state.standbyIndex = -1;
+  if (state.standby) {
+    state.standby.pause();
+    state.standby.removeAttribute("src");
+    state.standby.load();
+  }
   releaseTrackSource(state.currentTrack);
   if (state.activePlayer === "music") state.activePlayer = null;
   if (resetPosition) updateProgress();
@@ -991,6 +1087,7 @@ function playTrack(index, remember = true) {
       startTrackGainNormalization();
       scheduleNextTrackPreload();
       saveLibrary();
+      armStandby();
     }
   }).catch(error => {
     if (requestId !== state.playRequestId) return;
@@ -1471,38 +1568,53 @@ elements["volume-control"].addEventListener("input", event => {
   const volume = Number(event.target.value);
   elements["radio-audio"].volume = volume;
   elements["music-audio"].volume = volume;
+  if (state.standby) state.standby.volume = volume;
   elements["volume-value"].textContent = `${Math.round(volume * 100)}%`;
 });
-elements["music-audio"].addEventListener("timeupdate", updateProgress);
-elements["music-audio"].addEventListener("durationchange", updateProgress);
-elements["music-audio"].addEventListener("loadedmetadata", () => {
-  updateProgress();
-  const track = state.playlist[state.currentTrack];
-  if (track && Number.isFinite(elements["music-audio"].duration)) {
-    track.duration = elements["music-audio"].duration;
+const standbyAudio = document.createElement("audio");
+standbyAudio.preload = "auto";
+standbyAudio.hidden = true;
+document.body.appendChild(standbyAudio);
+state.standby = standbyAudio;
+state.standbyIndex = -1;
+state.handingOff = false;
+
+// 兩個 <audio> 輪流當主播放器；事件只處理「目前的主播放器」
+function bindMusicAudio(audio) {
+  const active = fn => (...args) => { if (audio === elements["music-audio"]) fn(...args); };
+  audio.addEventListener("timeupdate", active(() => { updateProgress(); maybeHandoff(); }));
+  audio.addEventListener("durationchange", active(() => updateProgress()));
+  audio.addEventListener("loadedmetadata", active(() => {
+    updateProgress();
+    const track = state.playlist[state.currentTrack];
+    if (track && Number.isFinite(audio.duration)) {
+      track.duration = audio.duration;
+      renderPlaylist();
+    }
+  }));
+  audio.addEventListener("play", active(() => {
+    state.activePlayer = "music";
+    setActivePlayer("music");
+    startTrackGainNormalization();
+  }));
+  audio.addEventListener("pause", active(() => {
+    stopTrackGainNormalization();
+    if (state.activePlayer === "music") setActivePlayer("music");
     renderPlaylist();
-  }
-});
-elements["music-audio"].addEventListener("play", () => {
-  state.activePlayer = "music";
-  setActivePlayer("music");
-  startTrackGainNormalization();
-});
-elements["music-audio"].addEventListener("pause", () => {
-  stopTrackGainNormalization();
-  if (state.activePlayer === "music") setActivePlayer("music");
-  renderPlaylist();
-});
-elements["music-audio"].addEventListener("ended", () => {
-  if (!state.loadingTrack) playNext(true);
-});
-["play", "pause", "ended", "error", "stalled", "waiting", "emptied", "abort"].forEach(name => {
-  elements["music-audio"].addEventListener(name, () => {
-    const audio = elements["music-audio"];
-    const code = name === "error" && audio.error ? ` code=${audio.error.code}` : "";
-    diag(`audio ${name} #${state.currentTrack} t=${Math.round(audio.currentTime)} ${document.visibilityState}${code}`);
+  }));
+  audio.addEventListener("ended", active(() => {
+    if (!state.loadingTrack && !state.handingOff) playNext(true);
+  }));
+  ["play", "pause", "ended", "error", "stalled", "waiting", "emptied", "abort"].forEach(name => {
+    audio.addEventListener(name, () => {
+      const code = name === "error" && audio.error ? ` code=${audio.error.code}` : "";
+      const tag = audio === elements["music-audio"] ? "" : "(備用)";
+      diag(`audio${tag} ${name} #${state.currentTrack} t=${Math.round(audio.currentTime)} ${document.visibilityState}${code}`);
+    });
   });
-});
+}
+bindMusicAudio(elements["music-audio"]);
+bindMusicAudio(standbyAudio);
 document.addEventListener("visibilitychange", () => {
   diag(`頁面 ${document.visibilityState}`);
   if (document.hidden) { saveLibrary(); return; }
