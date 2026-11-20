@@ -306,8 +306,3 @@ input[type="range"] { height: 3px; accent-color: var(--accent); cursor: pointer;
   .official-player-dialog { padding: 17px; }
   .official-player-dialog iframe { height: min(280px, 58vh); }
 }
-
-.diag-panel { margin: 18px 0 8px; font-size: 13px; opacity: .85; }
-.diag-panel summary { cursor: pointer; padding: 6px 0; }
-.diag-actions { display: flex; gap: 8px; margin: 8px 0; }
-.diag-panel pre { max-height: 260px; overflow: auto; white-space: pre-wrap; word-break: break-all; font-size: 11px; line-height: 1.5; user-select: text; }

@@ -1,5 +1,5 @@
 // 改版時把版本號 +1
-const CACHE = 'taiwan-radio-v3';
+const CACHE = 'taiwan-radio-v4';
 const ASSETS = ['./', 'index.html', 'app.js', 'styles.css', 'manifest.json', 'icon.svg'];
 
 self.addEventListener('install', e => {
